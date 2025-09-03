@@ -1,17 +1,18 @@
 # main.py
-# Pumpkin Python Snake — 1024x600, chunky tiles, keyboard-only (arrows/WASD)
+# Pumpkin Python Snake — 1024x600, chunky tiles, joystick + keyboard fallback
 # Run: pip install pygame  ;  python main.py
 
 import os, random
 import pygame
-import audio_mgr  # NEW
+import audio_mgr  # DFPlayer / mixer backend
 
+# ---------- Audio Config ----------
 AUDIO_BACKEND = "dfplayer"   # "mixer" or "dfplayer"
 DF_UART_PORT  = "/dev/serial0"
 DF_VOLUME     = 20           # 0..30
 DF_HISS_TRACK = 1            # plays 0001.mp3 on DFPlayer SD
 
-# ---------- Config ----------
+# ---------- Display / Game Config ----------
 SCREEN_W, SCREEN_H = 1024, 600
 TILE = 48
 GRID_W, GRID_H = SCREEN_W // TILE, SCREEN_H // TILE
@@ -20,6 +21,10 @@ MARGIN_LEFT = (SCREEN_W - GRID_W * TILE) // 2
 HEAD_SCALE = 2
 TAIL_SCALE = 2
 
+# --- Joystick settings ---
+USE_JOYSTICK  = True
+JOY_DEADZONE  = 0.5     # analog stick deadzone (if any)
+JOY_START_BTN = 9       # Start button index (adjust to your encoder if needed)
 
 # Colors
 SNAKE_COLOR = (220, 153, 0)
@@ -55,19 +60,33 @@ class SnakeGame:
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont(None, 28)
         self.bigfont = pygame.font.SysFont(None, 60)
+
+        # --- Joystick init ---
+        self.joy = None
+        if USE_JOYSTICK:
+            pygame.joystick.init()
+            if pygame.joystick.get_count() > 0:
+                self.joy = pygame.joystick.Joystick(0)
+                self.joy.init()
+                print(f"[input] joystick: {self.joy.get_name()} "
+                      f"(axes={self.joy.get_numaxes()}, hats={self.joy.get_numhats()}, buttons={self.joy.get_numbuttons()})")
+            else:
+                print("[input] no joystick found; keyboard fallback")
+        # toast shows “Keyboard mode” briefly if no joystick
+        self._toast_ms = 3000 if self.joy is None else 0
+
+        # --- Audio init ---
         audio_mgr.init(
             backend=AUDIO_BACKEND,
             df_uart_port=DF_UART_PORT,
             volume=DF_VOLUME,
             hiss_track=DF_HISS_TRACK,
             hiss_file="assets/hiss.mp3"
-            )
-
+        )
 
         # Assets (after display init so convert_alpha works)
         self.food_img = None
         self.snake_imgs = {"head": None, "tail": None}
-
         self._load_assets()           # pumpkin food
         self._load_snake_endcaps()    # head/tail
 
@@ -109,25 +128,59 @@ class SnakeGame:
         self.score = 0
         blocked = set(self.snake)
         self.food = random_empty_cell(blocked)
-        audio_mgr.play_hiss()
+        audio_mgr.play_hiss()  # fun startup hiss
         self.accum = 0
         self.state = "menu"   # menu -> playing -> paused/gameover
 
-    def handle_input(self):
-        # Keyboard — arrows or WASD
-        want = self.next_dir
-        keys = pygame.key.get_pressed()
-        if keys[pygame.K_UP] or keys[pygame.K_w]:
-            want = (0, -1)
-        elif keys[pygame.K_DOWN] or keys[pygame.K_s]:
-            want = (0, 1)
-        elif keys[pygame.K_LEFT] or keys[pygame.K_a]:
-            want = (-1, 0)
-        elif keys[pygame.K_RIGHT] or keys[pygame.K_d]:
-            want = (1, 0)
+    # ---- Joystick helpers ----
+    def _joy_dir(self):
+        """Return 4-way dir from joystick/hat with diagonals resolved; None if idle."""
+        if not self.joy:
+            return None
 
-        # Disallow reversing
-        if (want[0] != -self.dir[0]) or (want[1] != -self.dir[1]):
+        # Prefer HAT (typical for Zero-Delay encoders)
+        if self.joy.get_numhats() > 0:
+            hx, hy = self.joy.get_hat(0)  # hy: up=+1, down=-1
+            if hy != 0:
+                return (0, -1) if hy > 0 else (0, 1)
+            if hx != 0:
+                return (1, 0) if hx > 0 else (-1, 0)
+
+        # Fallback: analog axes → 4-way with deadzone
+        ax = self.joy.get_axis(0) if self.joy.get_numaxes() > 0 else 0.0
+        ay = self.joy.get_axis(1) if self.joy.get_numaxes() > 1 else 0.0
+        if abs(ax) < JOY_DEADZONE and abs(ay) < JOY_DEADZONE:
+            return None
+        if abs(ax) > abs(ay):
+            return (1, 0) if ax > 0 else (-1, 0)
+        else:
+            return (0, 1) if ay > 0 else (0, -1)
+
+    @staticmethod
+    def _is_reverse(want, cur):
+        return want[0] == -cur[0] and want[1] == -cur[1]
+
+    def handle_input(self):
+        want = self.next_dir
+
+        # 1) Joystick first (last input wins if moved)
+        jdir = self._joy_dir()
+        if jdir is not None:
+            want = jdir
+        else:
+            # 2) Keyboard fallback (arrows or WASD)
+            keys = pygame.key.get_pressed()
+            if keys[pygame.K_UP] or keys[pygame.K_w]:
+                want = (0, -1)
+            elif keys[pygame.K_DOWN] or keys[pygame.K_s]:
+                want = (0, 1)
+            elif keys[pygame.K_LEFT] or keys[pygame.K_a]:
+                want = (-1, 0)
+            elif keys[pygame.K_RIGHT] or keys[pygame.K_d]:
+                want = (1, 0)
+
+        # Disallow reversing directly
+        if not self._is_reverse(want, self.dir):
             self.next_dir = want
 
     # ---- Math helpers for segments ----
@@ -150,40 +203,26 @@ class SnakeGame:
         if d == (0,-1):  return 270
         return 0
 
-    def _orient_sprite(self, base_img: pygame.Surface, d: tuple[int,int], kind: str) -> pygame.Surface:
-        """
-        Rotate a RIGHT-facing base image to face direction d, then apply
-        a corrective flip for asymmetrical art.
-        kind: "head" | "tail"
-        """
-        # Rotate CCW from right-facing base
-        angle = self._dir_to_angle(d)
-        img = pygame.transform.rotate(base_img, angle)
-
-        # Per-direction flip maps (tweak here if your art differs)
+    def _orient_sprite(self, base_img: pygame.Surface, d, kind: str) -> pygame.Surface:
+        """Rotate from right-facing base + apply corrective flips per direction."""
+        img = pygame.transform.rotate(base_img, self._dir_to_angle(d))
         if kind == "head":
-            # Fix head looking mirrored when moving UP/DOWN:
-            # -> flip vertically after rotation on vertical moves.
             flip_x, flip_y = {
-                (1, 0): (False, False),  # right
-                (0, 1): (False, True),   # down
-                (-1,0): (False, False),  # left
-                (0,-1): (False, True),   # up
+                (1, 0): (False, False),
+                (0, 1): (False, True),
+                (-1,0): (False, False),
+                (0,-1): (False, True),
             }.get(d, (False, False))
-        else:  # "tail"
-            # Fix tail looking wrong when moving LEFT/RIGHT:
-            # -> flip horizontally after rotation on horizontal moves.
+        else:  # tail
             flip_x, flip_y = {
-                (1, 0): (True,  False),  # right
-                (0, 1): (False, False),  # down
-                (-1,0): (True,  False),  # left
-                (0,-1): (False, False),  # up
+                (1, 0): (True,  False),
+                (0, 1): (False, False),
+                (-1,0): (True,  False),
+                (0,-1): (False, False),
             }.get(d, (False, False))
-
         if flip_x or flip_y:
             img = pygame.transform.flip(img, flip_x, flip_y)
         return img
-
 
     # ---- Game step ----
     def step(self):
@@ -209,7 +248,7 @@ class SnakeGame:
             self.grow += 1
             blocked = set(self.snake)
             self.food = random_empty_cell(blocked)
-            # TODO: play hiss via audio backend
+            audio_mgr.play_hiss()
         else:
             if self.grow > 0:
                 self.grow -= 1
@@ -239,7 +278,7 @@ class SnakeGame:
         # Background
         self.screen.fill(BG_COLOR)
 
-        # Grid (optional visual aid)
+        # Grid
         for y in range(GRID_H):
             ypx = MARGIN_TOP + y * TILE
             pygame.draw.line(self.screen, GRID_COLOR, (MARGIN_LEFT, ypx), (MARGIN_LEFT + GRID_W*TILE, ypx), 1)
@@ -268,7 +307,6 @@ class SnakeGame:
                     rect = img.get_rect(center=dst.center)   # center align
                     self.screen.blit(img, rect.topleft)
                 else:
-                    # fallback bright block if head sprite missing
                     pygame.draw.rect(self.screen, (40, 255, 170), dst, border_radius=6)
                     pygame.draw.rect(self.screen, PY_EDGE, dst, width=1, border_radius=6)
                 continue
@@ -302,7 +340,13 @@ class SnakeGame:
         hud = self.font.render(f"Score: {self.score}", True, TEXT_COLOR)
         self.screen.blit(hud, (8, 6))
 
-    def draw_menu(self, title, subtitle="Press ENTER to start"):
+        # Mode toast (shows briefly if joystick missing/removed)
+        if self._toast_ms > 0:
+            label = "Keyboard mode" if self.joy is None else "Gamepad mode"
+            toast = self.font.render(label, True, (200, 200, 200))
+            self.screen.blit(toast, (SCREEN_W - toast.get_width() - 8, 6))
+
+    def draw_menu(self, title, subtitle="Press ENTER/Start to play"):
         self.draw_playfield()
         t = self.bigfont.render(title, True, TEXT_COLOR)
         s = self.font.render(subtitle, True, TEXT_COLOR)
@@ -317,6 +361,7 @@ class SnakeGame:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
+
                 elif event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_ESCAPE:
                         running = False
@@ -335,6 +380,31 @@ class SnakeGame:
                         if event.key == pygame.K_SPACE:
                             self.state = "playing"
 
+                # Joystick buttons (Start toggles state)
+                elif event.type == pygame.JOYBUTTONDOWN:
+                    if event.button == JOY_START_BTN:
+                        if self.state in ("menu", "gameover"):
+                            self.reset()
+                            self.state = "playing"
+                        elif self.state == "playing":
+                            self.state = "paused"
+                        elif self.state == "paused":
+                            self.state = "playing"
+
+                # Hotplug support (optional)
+                elif event.type == pygame.JOYDEVICEADDED:
+                    if self.joy is None and pygame.joystick.get_count() > 0:
+                        self.joy = pygame.joystick.Joystick(0)
+                        self.joy.init()
+                        self._toast_ms = 0
+                        print(f"[input] joystick connected: {self.joy.get_name()}")
+                elif event.type == pygame.JOYDEVICEREMOVED:
+                    if self.joy and event.instance_id == self.joy.get_instance_id():
+                        print("[input] joystick removed; keyboard fallback")
+                        self.joy = None
+                        self._toast_ms = 3000
+
+            # Movement & ticking
             if self.state == "playing":
                 self.handle_input()
                 self.accum += dt
@@ -342,15 +412,19 @@ class SnakeGame:
                     self.step()
                     self.accum -= STEP_MS
 
+            # countdown toast timer
+            if self._toast_ms > 0:
+                self._toast_ms = max(0, self._toast_ms - dt)
+
             # Draw
             if self.state == "menu":
                 self.draw_menu("Pumpkin Python Snake")
             elif self.state == "paused":
                 self.draw_playfield()
-                self.draw_menu("Paused", "Press SPACE to resume")
+                self.draw_menu("Paused", "Press SPACE/Start to resume")
             elif self.state == "gameover":
                 self.draw_playfield()
-                self.draw_menu(f"Game Over — Score {self.score}", "Press ENTER to restart")
+                self.draw_menu(f"Game Over — Score {self.score}", "ENTER/Start to restart")
             else:
                 self.draw_playfield()
 
