@@ -318,7 +318,7 @@ class SnakeGame:
                     if event.key == pygame.K_ESCAPE:
                         running = False; continue
                     if self.state in ("menu","gameover"):
-                        if event.key == pygame.K_RETURN:
+                        if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
                             self.reset(); self.state="playing"; continue
                     if self.state=="playing":
                         if event.key==pygame.K_SPACE: self.state="paused"
