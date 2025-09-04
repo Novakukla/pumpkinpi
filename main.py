@@ -1,12 +1,10 @@
 # main.py
-# Pumpkin Python Snake — 1024x600, chunky tiles, joystick (Sanwa encoder) + keyboard fallback
-# Run: pip install pygame  ;  python main.py
+# Python vs. Pumpkins — 1024x600, chunky tiles, joystick (Sanwa encoder) + keyboard fallback
+# Run: pip install pygame  ;  python main.py         # windowed dev: python main.py --windowed --fps 60
+
 import os, random, argparse
 import pygame
-import audio_mgr
-
-# --- Display / launch options ---
-FULLSCREEN_DEFAULT = True   # Pi: fullscreen by default; use --windowed to override
+import audio_mgr  # DFPlayer / mixer backend
 
 # ---------- Audio Config ----------
 AUDIO_BACKEND = "dfplayer"   # "mixer" or "dfplayer"
@@ -26,12 +24,15 @@ TAIL_SCALE = 2
 # --- Joystick settings (Sanwa + Zero-Delay encoder: axes only) ---
 USE_JOYSTICK       = True
 JOY_DEADZONE       = 0.5      # values are ±1 on your encoder; 0.5 is safe
-JOY_START_BTN      = 9        # your working Start button index
+JOY_START_BTN      = 9        # (kept for later; commented in events below)
 
 # Axis mapping: (x_axis_index, y_axis_index)
 # Your encoder: axis0 = vertical, axis1 = horizontal -> (x, y) = (1, 0)
 JOY_AXIS           = (1, 0)   # x = axis1, y = axis0
 JOY_AXIS_INVERT_Y  = True     # makes UP=(0,-1), DOWN=(0,1)
+
+# --- Launch options ---
+FULLSCREEN_DEFAULT = True     # Pi fullscreen by default; use --windowed to override
 
 # Colors
 SNAKE_COLOR = (220, 153, 0)
@@ -53,7 +54,6 @@ _parser.add_argument("--windowed", action="store_true", help="run in a resizable
 _parser.add_argument("--fps", type=int, default=60, help="render cap (default 60)")
 _args = _parser.parse_args()
 
-
 # ---------- Helpers ----------
 def grid_to_px(cell):
     x, y = cell
@@ -69,17 +69,16 @@ def random_empty_cell(blocked):
 class SnakeGame:
     def __init__(self):
         pygame.init()
-        # Choose fullscreen unless --windowed was passed
+
+        # Fullscreen unless --windowed specified
         want_full = FULLSCREEN_DEFAULT and not _args.windowed
         flags = 0
         if want_full:
-            # FULLSCREEN + SCALED = letterbox-free fullscreen with logical size
             flags |= pygame.FULLSCREEN | pygame.SCALED
 
         self.screen = pygame.display.set_mode((SCREEN_W, SCREEN_H), flags)
-        pygame.display.set_caption("Pumpkin Python Snake")
+        pygame.display.set_caption("Python vs. Pumpkins")
 
-        # Grab focus + hide mouse in fullscreen for kiosk feel
         if want_full:
             pygame.event.set_grab(True)
             pygame.mouse.set_visible(False)
@@ -152,7 +151,7 @@ class SnakeGame:
         self.score = 0
         blocked = set(self.snake)
         self.food = random_empty_cell(blocked)
-        audio_mgr.play_hiss()
+        audio_mgr.play_hiss()  # fun startup hiss
         self.accum = 0
         self.state = "menu"
 
@@ -278,11 +277,13 @@ class SnakeGame:
         for x in range(GRID_W+1):
             xpx = MARGIN_LEFT + x*TILE
             pygame.draw.line(self.screen, GRID_COLOR,(xpx,MARGIN_TOP),(xpx,MARGIN_TOP+GRID_H*TILE),1)
+
         fx, fy = grid_to_px(self.food)
         if self.food_img:
             self.screen.blit(self.food_img,(fx+1,fy+1))
         else:
             pygame.draw.rect(self.screen, FOOD_COLOR,(fx+2,fy+2,TILE-4,TILE-4),border_radius=3)
+
         n = len(self.snake)
         for i, cell in enumerate(self.snake):
             px, py = grid_to_px(cell)
@@ -314,6 +315,7 @@ class SnakeGame:
             vertical   = (d_in[0]==0 and d_out[0]==0)
             is_turn    = not(horizontal or vertical)
             self._draw_body_block(dst,index=i,horizontal=horizontal,is_turn=is_turn)
+
         hud = self.font.render(f"Score: {self.score}",True,TEXT_COLOR)
         self.screen.blit(hud,(8,6))
         if self._toast_ms>0:
@@ -321,7 +323,7 @@ class SnakeGame:
             toast = self.font.render(label,True,(200,200,200))
             self.screen.blit(toast,(SCREEN_W-toast.get_width()-8,6))
 
-    def draw_menu(self, title, subtitle="Press ENTER/Start to play"):
+    def draw_menu(self, title, subtitle="Move joystick / press any button to start"):
         self.draw_playfield()
         t = self.bigfont.render(title,True,TEXT_COLOR)
         s = self.font.render(subtitle,True,TEXT_COLOR)
@@ -336,38 +338,93 @@ class SnakeGame:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
+
+                # ---------- KEYBOARD ----------
                 elif event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_ESCAPE:
-                        running = False; continue
-                    if self.state in ("menu","gameover"):
-                        if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
-                            self.reset(); self.state="playing"; continue
-                    if self.state=="playing":
-                        if event.key==pygame.K_SPACE: self.state="paused"
-                    elif self.state=="paused":
-                        if event.key==pygame.K_SPACE: self.state="playing"
-                elif event.type==pygame.JOYBUTTONDOWN:
-                    if event.button==JOY_START_BTN:
-                        if self.state in ("menu","gameover"):
-                            self.reset(); self.state="playing"
-                        elif self.state=="playing": self.state="paused"
-                        elif self.state=="paused": self.state="playing"
-            if self.state=="playing":
+                        running = False
+                        continue
+
+                    # Start/restart from keyboard: Enter, keypad Enter, Space, or arrow/WASD
+                    if self.state in ("menu", "gameover"):
+                        if event.key in (
+                            pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE,
+                            pygame.K_UP, pygame.K_DOWN, pygame.K_LEFT, pygame.K_RIGHT,
+                            pygame.K_w, pygame.K_a, pygame.K_s, pygame.K_d
+                        ):
+                            self.reset()
+                            self.state = "playing"
+                            continue
+
+                    # Pause/resume via keyboard
+                    if self.state == "playing":
+                        if event.key in (pygame.K_SPACE,):
+                            self.state = "paused"
+                    elif self.state == "paused":
+                        if event.key in (pygame.K_SPACE,):
+                            self.state = "playing"
+
+                # ---------- JOYSTICK: START/RESTART ON ANY INPUT ----------
+                elif self.state in ("menu", "gameover") and self.joy:
+                    # Any button press starts
+                    if event.type == pygame.JOYBUTTONDOWN:
+                        self.reset()
+                        self.state = "playing"
+                        continue
+                    # Any hat motion (non-zero) starts
+                    elif event.type == pygame.JOYHATMOTION:
+                        hx, hy = self.joy.get_hat(event.hat)
+                        if hx != 0 or hy != 0:
+                            self.reset()
+                            self.state = "playing"
+                            continue
+                    # Any axis motion beyond deadzone starts
+                    elif event.type == pygame.JOYAXISMOTION:
+                        if abs(event.value) > JOY_DEADZONE:
+                            self.reset()
+                            self.state = "playing"
+                            continue
+
+                # ---------- JOYSTICK: PAUSE/RESUME (optional Start button) ----------
+                # If you wire a Start button later, uncomment this block:
+                """
+                elif event.type == pygame.JOYBUTTONDOWN:
+                    if event.button == JOY_START_BTN:
+                        if self.state in ("menu", "gameover"):
+                            self.reset(); self.state = "playing"
+                        elif self.state == "playing":
+                            self.state = "paused"
+                        elif self.state == "paused":
+                            self.state = "playing"
+                """
+
+            # Movement & ticking
+            if self.state == "playing":
                 self.handle_input()
-                self.accum+=dt
-                while self.accum>=STEP_MS:
-                    self.step(); self.accum-=STEP_MS
-            if self._toast_ms>0: self._toast_ms=max(0,self._toast_ms-dt)
-            if self.state=="menu":
-                self.draw_menu("Pumpkin Python Snake")
-            elif self.state=="paused":
-                self.draw_playfield(); self.draw_menu("Paused","Press SPACE/Start to resume")
-            elif self.state=="gameover":
-                self.draw_playfield(); self.draw_menu(f"Game Over — Score {self.score}","ENTER/Start to restart")
+                self.accum += dt
+                while self.accum >= STEP_MS:
+                    self.step()
+                    self.accum -= STEP_MS
+
+            # countdown toast timer
+            if self._toast_ms > 0:
+                self._toast_ms = max(0, self._toast_ms - dt)
+
+            # Draw
+            if self.state == "menu":
+                self.draw_menu("Python vs. Pumpkins")
+            elif self.state == "paused":
+                self.draw_playfield()
+                self.draw_menu("Paused", "Press SPACE or move joystick to resume")
+            elif self.state == "gameover":
+                self.draw_playfield()
+                self.draw_menu(f"Game Over — Score {self.score}", "Move joystick / any button to restart")
             else:
                 self.draw_playfield()
+
             pygame.display.flip()
+
         pygame.quit()
 
-if __name__=="__main__":
+if __name__ == "__main__":
     SnakeGame().run()
