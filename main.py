@@ -1,10 +1,12 @@
 # main.py
 # Pumpkin Python Snake — 1024x600, chunky tiles, joystick (Sanwa encoder) + keyboard fallback
 # Run: pip install pygame  ;  python main.py
-
-import os, random
+import os, random, argparse
 import pygame
-import audio_mgr  # DFPlayer / mixer backend
+import audio_mgr
+
+# --- Display / launch options ---
+FULLSCREEN_DEFAULT = True   # Pi: fullscreen by default; use --windowed to override
 
 # ---------- Audio Config ----------
 AUDIO_BACKEND = "dfplayer"   # "mixer" or "dfplayer"
@@ -45,6 +47,13 @@ PY_BLOTCH   = (246, 214, 156)
 STEP_MS   = 150   # slower (≈6.7 updates/sec)
 START_LEN = 4
 
+# ---------- CLI ----------
+_parser = argparse.ArgumentParser()
+_parser.add_argument("--windowed", action="store_true", help="run in a resizable window")
+_parser.add_argument("--fps", type=int, default=60, help="render cap (default 60)")
+_args = _parser.parse_args()
+
+
 # ---------- Helpers ----------
 def grid_to_px(cell):
     x, y = cell
@@ -60,8 +69,21 @@ def random_empty_cell(blocked):
 class SnakeGame:
     def __init__(self):
         pygame.init()
-        self.screen = pygame.display.set_mode((SCREEN_W, SCREEN_H))
+        # Choose fullscreen unless --windowed was passed
+        want_full = FULLSCREEN_DEFAULT and not _args.windowed
+        flags = 0
+        if want_full:
+            # FULLSCREEN + SCALED = letterbox-free fullscreen with logical size
+            flags |= pygame.FULLSCREEN | pygame.SCALED
+
+        self.screen = pygame.display.set_mode((SCREEN_W, SCREEN_H), flags)
         pygame.display.set_caption("Pumpkin Python Snake")
+
+        # Grab focus + hide mouse in fullscreen for kiosk feel
+        if want_full:
+            pygame.event.set_grab(True)
+            pygame.mouse.set_visible(False)
+
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont(None, 28)
         self.bigfont = pygame.font.SysFont(None, 60)
@@ -310,7 +332,7 @@ class SnakeGame:
     def run(self):
         running = True
         while running:
-            dt = self.clock.tick(60)
+            dt = self.clock.tick(_args.fps)
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
