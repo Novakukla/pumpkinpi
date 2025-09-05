@@ -495,7 +495,7 @@ class SnakeGame:
             self.screen.blit(txt, txt.get_rect(center=r.center))
 
         hint1 = self.font.render("LEFT/RIGHT: Select   UP/DOWN: Change", True, TEXT_COLOR)
-        hint2 = self.font.render("Hover ENTER and press UP to submit", True, TEXT_COLOR)
+        hint2 = self.font.render("Hover ENTER and press DOWN to submit", True, TEXT_COLOR)
         self.screen.blit(hint1, hint1.get_rect(midtop=(panel.centerx, panel.bottom - 70)))
         self.screen.blit(hint2, hint2.get_rect(midtop=(panel.centerx, panel.bottom - 42)))
 
