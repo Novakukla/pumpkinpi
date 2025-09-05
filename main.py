@@ -16,7 +16,6 @@ MARGIN_LEFT = (SCREEN_W - GRID_W * TILE) // 2
 # Fullscreen on Pi; windowed on desktop by commenting this block if you prefer
 FULLSCREEN = True
 
-# Joystick axis mapping (per your encoder tester)
 # axis 0: -1 = LEFT, +1 = RIGHT
 # axis 1: -1 = UP,   +1 = DOWN
 AXIS_H = 1
@@ -220,7 +219,7 @@ class SnakeGame:
         # Joystick axes
         if self.js:
             ax_h = self.js.get_axis(AXIS_H)
-            ax_v = self.js.get_axis(AXIS_V)
+            ax_v = -self.js.get_axis(AXIS_V)
             if abs(ax_h) > abs(ax_v):
                 if ax_h <= -AXIS_THRESH: want = (-1, 0)
                 elif ax_h >=  AXIS_THRESH: want = ( 1, 0)
