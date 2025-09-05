@@ -60,6 +60,22 @@ def ensure_save_dir(path: str):
     if d and not os.path.isdir(d):
         os.makedirs(d, exist_ok=True)
 
+def _stick_axes(self):
+    if not self.js:
+        return 0.0, 0.0
+    ax_h = self.js.get_axis(AXIS_H)
+    ax_v = self.js.get_axis(AXIS_V)
+    return ax_h, ax_v
+
+def _stick_neutral(self, deadzone=0.2):
+    ax_h, ax_v = self._stick_axes()
+    return abs(ax_h) < deadzone and abs(ax_v) < deadzone
+
+def _stick_moved(self, thresh=AXIS_THRESH):
+    ax_h, ax_v = self._stick_axes()
+    return (abs(ax_h) > thresh) or (abs(ax_v) > thresh)
+
+
 def load_scores(path: str):
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -94,6 +110,8 @@ def save_scores(path: str, scores):
 class SnakeGame:
     def __init__(self):
         pygame.init()
+        pygame.mouse.set_visible(False)   # hide cursor
+        pygame.event.set_grab(True)       # lock pointer to the window
 
         flags = 0
         if FULLSCREEN:
@@ -164,6 +182,7 @@ class SnakeGame:
         # Name entry model
         self.entry_name = ["A", "A", "A", "A"]
         self.entry_idx = 0    # 0..3 (3 = ENTER)
+        self.start_need_neutral = True
 
     # ---- Input helpers ----
     def _dir_from(self, a, b):
@@ -264,6 +283,7 @@ class SnakeGame:
             self.last_ui_nav = 0
         else:
             self.state = "gameover"
+            self.start_need_neutral = True
 
     # ---- Highscore logic ----
     def _qualifies(self, score: int) -> bool:
@@ -280,6 +300,7 @@ class SnakeGame:
         self.scores = self.scores[:MAX_SCORES]
         save_scores(SAVE_PATH, self.scores)
         self.state = "gameover"
+        self.start_need_neutral = True
 
     # ---- UI name entry helpers ----
     def _ui_can_nav(self):
@@ -518,17 +539,25 @@ class SnakeGame:
             if self.state == "menu":
                 # Start on any joystick movement or Enter (keyboard)
                 started = False
-                keys = pygame.key.get_pressed()
-                if keys[pygame.K_RETURN]:
-                    started = True
-                if self.js:
-                    ax_h = self.js.get_axis(AXIS_H)
-                    ax_v = self.js.get_axis(AXIS_V)
-                    if abs(ax_h) > AXIS_THRESH or abs(ax_v) > AXIS_THRESH:
+
+                # only trigger on key *edge*
+                for e in events:
+                    if e.type == pygame.KEYDOWN and e.key == pygame.K_RETURN:
                         started = True
+
+                # joystick: require neutral first, then movement
+                if self.js:
+                    if self.start_need_neutral:
+                        if self._stick_neutral():
+                            self.start_need_neutral = False
+                    else:
+                        if self._stick_moved():
+                            started = True
+
                 if started:
                     self.reset()
                     self.state = "playing"
+
                 # draw
                 self.draw_menu("Python vs. Pumpkins")
 
