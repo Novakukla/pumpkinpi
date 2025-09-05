@@ -468,6 +468,7 @@ class SnakeGame:
                 self.screen.blit(line, (x, yy))
             yy += line.get_height() + 2
 
+
     def _draw_gameover_scores_panel(self):
         # Panel geometry: centered, leaves space below for the restart hint
         panel_w, panel_h = 560, 320
@@ -624,7 +625,7 @@ class SnakeGame:
                 self._draw_gameover_scores_panel()
                 # Restart hint (sits below the panel)
                 s = self.font.render("Press ENTER or move joystick to play again", True, TEXT_COLOR)
-                self.screen.blit(s, s.get_rect(midtop=(SCREEN_W//2, SCREEN_H//2 + 140)))
+                self.screen.blit(s, s.get_rect(midtop=(SCREEN_W//2, SCREEN_H//2 + 160)))
                 # start on input
                 started = False
                 for e in events:
