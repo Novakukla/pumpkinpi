@@ -19,8 +19,8 @@ FULLSCREEN = True
 # Joystick axis mapping (per your encoder tester)
 # axis 0: -1 = LEFT, +1 = RIGHT
 # axis 1: -1 = UP,   +1 = DOWN
-AXIS_H = 0
-AXIS_V = 1
+AXIS_H = 1
+AXIS_V = 0
 AXIS_THRESH = 0.6      # stick threshold to count as a press
 UI_REPEAT_MS = 220     # cooldown for UI navigation (name entry)
 
