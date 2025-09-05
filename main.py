@@ -482,25 +482,30 @@ class SnakeGame:
         title = self.bigfont.render("High Scores", True, TEXT_COLOR)
         self.screen.blit(title, title.get_rect(midtop=(panel.centerx, panel.top + 14)))
 
-	    # Split into 2 columns
-	    left_x  = panel.left + panel_w // 4
-	    right_x = panel.left + 3 * panel_w // 4
-	    start_y = panel.top + 70
-	    line_gap = 8
+        # Split into 2 columns
+        left_x  = panel.left + panel_w // 4
+        right_x = panel.left + 3 * panel_w // 4
+        start_y = panel.top + 70
+        line_gap = 8
 
-	    # Left column (1–5)
-	    yy = start_y
-	    for i, row in enumerate(self.scores[:5], start=1):
-	        line = self.hiscore_font.render(f"{i:2d}. {row['name']:<4} — {row['score']}", True, TEXT_COLOR)
-	        self.screen.blit(line, line.get_rect(midtop=(left_x, yy)))
-	        yy += line.get_height() + line_gap
+        # Left column (1–5)
+        yy = start_y
+        for i, row in enumerate(self.scores[:5], start=1):
+            line = self.hiscore_font.render(
+                f"{i:2d}. {row['name']:<4} — {row['score']}", True, TEXT_COLOR
+            )
+            self.screen.blit(line, line.get_rect(midtop=(left_x, yy)))
+            yy += line.get_height() + line_gap
 
-	    # Right column (6–10)
-	    yy = start_y
-	    for i, row in enumerate(self.scores[5:10], start=6):
-	        line = self.hiscore_font.render(f"{i:2d}. {row['name']:<4} — {row['score']}", True, TEXT_COLOR)
-	        self.screen.blit(line, line.get_rect(midtop=(right_x, yy)))
-	        yy += line.get_height() + line_gap
+        # Right column (6–10)
+        yy = start_y
+        for i, row in enumerate(self.scores[5:10], start=6):
+            line = self.hiscore_font.render(
+                f"{i:2d}. {row['name']:<4} — {row['score']}", True, TEXT_COLOR
+            )
+            self.screen.blit(line, line.get_rect(midtop=(right_x, yy)))
+            yy += line.get_height() + line_gap
+
 
 
     def _draw_name_entry(self):
