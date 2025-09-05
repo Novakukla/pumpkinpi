@@ -104,6 +104,7 @@ class SnakeGame:
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont(None, 28)
         self.bigfont = pygame.font.SysFont(None, 60)
+        self.hiscore_font = pygame.font.SysFont(None, 36)
 
         # Joystick
         pygame.joystick.init()
@@ -467,6 +468,29 @@ class SnakeGame:
                 self.screen.blit(line, (x, yy))
             yy += line.get_height() + 2
 
+    def _draw_gameover_scores_panel(self):
+        # Panel geometry: centered, leaves space below for the restart hint
+        panel_w, panel_h = 560, 320
+        panel = pygame.Rect(0, 0, panel_w, panel_h)
+        panel.center = (SCREEN_W // 2, SCREEN_H // 2 - 30)
+
+        # Panel background
+        pygame.draw.rect(self.screen, (16, 16, 16), panel, border_radius=12)
+        pygame.draw.rect(self.screen, (64, 64, 64), panel, width=2, border_radius=12)
+
+        # Title
+        title = self.bigfont.render("High Scores", True, TEXT_COLOR)
+        self.screen.blit(title, title.get_rect(midtop=(panel.centerx, panel.top + 14)))
+
+        # Rows
+        yy = panel.top + 70
+        line_gap = 6
+        for i, row in enumerate(self.scores[:MAX_SCORES], start=1):
+            line = self.hiscore_font.render(f"{i:2d}. {row['name']:<4} — {row['score']}", True, TEXT_COLOR)
+            self.screen.blit(line, line.get_rect(midtop=(panel.centerx, yy)))
+            yy += line.get_height() + line_gap
+
+
     def _draw_name_entry(self):
         self.draw_playfield()
 
@@ -580,10 +604,10 @@ class SnakeGame:
 
             elif self.state == "gameover":
                 self.draw_playfield()
-                self._draw_scoreboard(x=SCREEN_W//2, y=SCREEN_H//2 - 20, center=True)
-                # Restart hint
+                self._draw_gameover_scores_panel()
+                # Restart hint (sits below the panel)
                 s = self.font.render("Press ENTER or move joystick to play again", True, TEXT_COLOR)
-                self.screen.blit(s, s.get_rect(midtop=(SCREEN_W//2, SCREEN_H//2 + 120)))
+                self.screen.blit(s, s.get_rect(midtop=(SCREEN_W//2, SCREEN_H//2 + 140)))
                 # start on input
                 started = False
                 for e in events:
