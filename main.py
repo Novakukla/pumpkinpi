@@ -60,28 +60,11 @@ def ensure_save_dir(path: str):
     if d and not os.path.isdir(d):
         os.makedirs(d, exist_ok=True)
 
-def _stick_axes(self):
-    if not self.js:
-        return 0.0, 0.0
-    ax_h = self.js.get_axis(AXIS_H)
-    ax_v = self.js.get_axis(AXIS_V)
-    return ax_h, ax_v
-
-def _stick_neutral(self, deadzone=0.2):
-    ax_h, ax_v = self._stick_axes()
-    return abs(ax_h) < deadzone and abs(ax_v) < deadzone
-
-def _stick_moved(self, thresh=AXIS_THRESH):
-    ax_h, ax_v = self._stick_axes()
-    return (abs(ax_h) > thresh) or (abs(ax_v) > thresh)
-
-
 def load_scores(path: str):
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, list):
-            # sanitize
             out = []
             for it in data:
                 name = str(it.get("name", ""))[:4]
@@ -115,7 +98,6 @@ class SnakeGame:
 
         flags = 0
         if FULLSCREEN:
-            # Prefer X11/Wayland desktop; if you’re using pure KMS console you can set SDL_VIDEODRIVER in your service
             flags |= pygame.FULLSCREEN
         self.screen = pygame.display.set_mode((SCREEN_W, SCREEN_H), flags)
         pygame.display.set_caption("Python vs. Pumpkins")
@@ -141,6 +123,22 @@ class SnakeGame:
         self.scores = load_scores(SAVE_PATH)
 
         self.reset()
+
+    # ---- Joystick helpers (FIX: were global before) ----
+    def _stick_axes(self):
+        if not self.js:
+            return 0.0, 0.0
+        ax_h = self.js.get_axis(AXIS_H)
+        ax_v = self.js.get_axis(AXIS_V)
+        return ax_h, ax_v
+
+    def _stick_neutral(self, deadzone=0.2):
+        ax_h, ax_v = self._stick_axes()
+        return abs(ax_h) < deadzone and abs(ax_v) < deadzone
+
+    def _stick_moved(self, thresh=AXIS_THRESH):
+        ax_h, ax_v = self._stick_axes()
+        return (abs(ax_h) > thresh) or (abs(ax_v) > thresh)
 
     # ---- Assets ----
     def _load_assets(self):
@@ -238,7 +236,7 @@ class SnakeGame:
         # Joystick axes
         if self.js:
             ax_h = self.js.get_axis(AXIS_H)
-            ax_v = -self.js.get_axis(AXIS_V)
+            ax_v = -self.js.get_axis(AXIS_V)  # you chose to invert V here
             if abs(ax_h) > abs(ax_v):
                 if ax_h <= -AXIS_THRESH: want = (-1, 0)
                 elif ax_h >=  AXIS_THRESH: want = ( 1, 0)
@@ -266,8 +264,6 @@ class SnakeGame:
             self.grow += 1
             blocked = set(self.snake)
             self.food = random_empty_cell(blocked)
-            # play hiss here if you wired mixer/DF
-            # audio_mgr.play_hiss()
         else:
             if self.grow > 0:
                 self.grow -= 1
@@ -316,7 +312,6 @@ class SnakeGame:
     def _ui_change_letter(self, delta):
         if self.entry_idx >= 4:
             return
-        # Allowed charset: A-Z, 0-9, space -> 37 chars
         charset = [*(chr(ord('A')+i) for i in range(26)),
                    *[str(i) for i in range(10)],
                    ' ']
@@ -346,7 +341,6 @@ class SnakeGame:
                     if self._ui_can_nav() and self.entry_idx < 4:
                         self._ui_change_letter(-1)
                 elif e.key == pygame.K_ESCAPE:
-                    # cancel name entry
                     self.state = "gameover"
 
         # Joystick axes (edge-ish via cooldown)
@@ -389,7 +383,6 @@ class SnakeGame:
                 y = body_rect.top + (i+1)*(body_rect.h//(blotches+1)) - h//2
             blotch_rect = pygame.Rect(x, y, w, h)
             pygame.draw.ellipse(self.screen, PY_BLOTCH, blotch_rect)
-
 
     def draw_playfield(self):
         self.screen.fill(BG_COLOR)
@@ -498,7 +491,7 @@ class SnakeGame:
 
         labels = [self.entry_name[0], self.entry_name[1], self.entry_name[2], self.entry_name[3], "ENTER"]
         rects = []
-        total_w = 5*slot_w + 4*gap # 4 slots
+        total_w = 5*slot_w + 4*gap
         start_x = panel.centerx - (total_w // 2) + slot_w//2
 
         for i in range(5):
@@ -506,7 +499,6 @@ class SnakeGame:
             r = pygame.Rect(0, 0, slot_w, slot_h)
             r.center = (cx, slots_y)
             rects.append(r)
-            # highlight current index
             col = (50,50,50) if i != self.entry_idx else (90,90,90)
             pygame.draw.rect(self.screen, col, r, border_radius=8)
             pygame.draw.rect(self.screen, (150,150,150), r, width=2, border_radius=8)
@@ -594,14 +586,16 @@ class SnakeGame:
                 self.screen.blit(s, s.get_rect(midtop=(SCREEN_W//2, SCREEN_H//2 + 120)))
                 # start on input
                 started = False
-                keys = pygame.key.get_pressed()
-                if keys[pygame.K_RETURN]:
-                    started = True
-                if self.js:
-                    ax_h = self.js.get_axis(AXIS_H)
-                    ax_v = self.js.get_axis(AXIS_V)
-                    if abs(ax_h) > AXIS_THRESH or abs(ax_v) > AXIS_THRESH:
+                for e in events:
+                    if e.type == pygame.KEYDOWN and e.key == pygame.K_RETURN:
                         started = True
+                if self.js:
+                    if self.start_need_neutral:
+                        if self._stick_neutral():
+                            self.start_need_neutral = False
+                    else:
+                        if self._stick_moved():
+                            started = True
                 if started:
                     self.reset()
                     self.state = "playing"
