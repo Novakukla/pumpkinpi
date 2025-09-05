@@ -346,19 +346,30 @@ class SnakeGame:
     # ---- Drawing ----
     def _draw_body_block(self, dst: pygame.Rect, index: int, horizontal: bool, is_turn: bool):
         base = PY_BODY_A if (index % 2 == 0) else PY_BODY_B
-        pygame.draw.rect(self.screen, base, dst, border_radius=6)
-        pygame.draw.rect(self.screen, PY_EDGE, dst, width=1, border_radius=6)
+
+        # Adjust rect shape depending on orientation
+        if horizontal:
+            body_rect = dst.inflate(10, 0)  # wider, flatter
+        else:
+            body_rect = dst.inflate(0, 10)  # taller, thinner
+
+        pygame.draw.ellipse(self.screen, base, body_rect)
+        pygame.draw.ellipse(self.screen, PY_EDGE, body_rect, width=1)
+
+        # Blotches
         blotches = 1 if is_turn else 2
         for i in range(blotches):
             if horizontal:
-                w = max(6, dst.w//3); h = max(6, dst.h//2)
-                x = dst.left + (i+1)*(dst.w//(blotches+1)) - w//2
-                y = dst.centery - h//2
+                w = max(6, body_rect.w//3); h = max(4, body_rect.h//2)
+                x = body_rect.left + (i+1)*(body_rect.w//(blotches+1)) - w//2
+                y = body_rect.centery - h//2
             else:
-                w = max(6, dst.w//2); h = max(6, dst.h//3)
-                x = dst.centerx - w//2
-                y = dst.top + (i+1)*(dst.h//(blotches+1)) - h//2
-            pygame.draw.ellipse(self.screen, PY_BLOTCH, pygame.Rect(x, y, w, h))
+                w = max(4, body_rect.w//2); h = max(6, body_rect.h//3)
+                x = body_rect.centerx - w//2
+                y = body_rect.top + (i+1)*(body_rect.h//(blotches+1)) - h//2
+            blotch_rect = pygame.Rect(x, y, w, h)
+            pygame.draw.ellipse(self.screen, PY_BLOTCH, blotch_rect)
+
 
     def draw_playfield(self):
         self.screen.fill(BG_COLOR)
