@@ -485,7 +485,7 @@ class SnakeGame:
         self.screen.blit(subt, subt.get_rect(midtop=(panel.centerx, panel.top + 72)))
 
         # Entry slots (4 letters + ENTER)
-        slots_y = panel.top + 250
+        slots_y = panel.top + 350
         slot_w, slot_h = 150, 72
         gap = 22
 
