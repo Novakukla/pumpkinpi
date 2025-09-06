@@ -3,8 +3,9 @@
 # Requires: pygame (or pygame-ce)
 # Run on Pi: python3 main.py
 
-import os, json, random, time, tempfile, shutil
+import os, json, random, time, tempfile, shutil, subprocess, colorsys
 import pygame
+import shutil as _shutil  # for which()
 
 # ---------- Config ----------
 SCREEN_W, SCREEN_H = 1024, 600
@@ -14,10 +15,11 @@ MARGIN_TOP = (SCREEN_H - GRID_H * TILE) // 2
 MARGIN_LEFT = (SCREEN_W - GRID_W * TILE) // 2
 
 # Fullscreen on Pi; windowed on desktop by commenting this block if you prefer
-FULLSCREEN = True
+FULLSCREEN = False
 
-# axis 0: -1 = LEFT, +1 = RIGHT
-# axis 1: -1 = UP,   +1 = DOWN
+# Joystick axis mapping you settled on:
+# axis 1: -1 = LEFT, +1 = RIGHT
+# axis 0: -1 = UP,   +1 = DOWN
 AXIS_H = 1
 AXIS_V = 0
 AXIS_THRESH = 0.6      # stick threshold to count as a press
@@ -43,6 +45,15 @@ START_LEN = 4
 
 HEAD_SCALE = 2
 TAIL_SCALE = 2
+
+# Screen lock duration (ms) before returning to menu
+GAMEOVER_LOCK_MS = 5000
+TOPCELEB_MS = 5000   # how long to show the rainbow neon celebration
+
+ASSETS_DIR = "assets"
+ARCADE_TTF = os.path.join(ASSETS_DIR, "PressStart2P-Regular.ttf")
+VIDEO_DIED = os.path.join(ASSETS_DIR, "youdied.mp4")
+# (Top score video removed per your request)
 
 # ---------- Helpers ----------
 def grid_to_px(cell):
@@ -102,9 +113,9 @@ class SnakeGame:
         self.screen = pygame.display.set_mode((SCREEN_W, SCREEN_H), flags)
         pygame.display.set_caption("Python vs. Pumpkins")
         self.clock = pygame.time.Clock()
-        self.font = pygame.font.SysFont(None, 28)
-        self.bigfont = pygame.font.SysFont(None, 60)
-        self.hiscore_font = pygame.font.SysFont(None, 36)
+
+        # Fonts (retro arcade if available)
+        self._init_fonts()
 
         # Joystick
         pygame.joystick.init()
@@ -123,9 +134,35 @@ class SnakeGame:
         # Highscores
         self.scores = load_scores(SAVE_PATH)
 
+        # Timing for screens
+        self.gameover_until = 0  # when gameover can auto-leave
+        self.post_until = 0      # when post-submit can auto-leave
+        self.topcelebrate_until = 0
+
+
         self.reset()
 
-    # ---- Joystick helpers (FIX: were global before) ----
+    # ---- Fonts ----
+    def _init_fonts(self):
+        def _sys(size): return pygame.font.SysFont("Courier New", size, bold=True)
+        if os.path.exists(ARCADE_TTF):
+            try:
+                self.title_font   = pygame.font.Font(ARCADE_TTF, 42)  # big title
+                self.bigfont      = pygame.font.Font(ARCADE_TTF, 24)
+                self.hiscore_font = pygame.font.Font(ARCADE_TTF, 17)
+                self.font         = pygame.font.Font(ARCADE_TTF, 17)
+                self.top_font     = pygame.font.Font(ARCADE_TTF, 96) 
+                return
+            except Exception as e:
+                print(f"[warn] arcade font load failed: {e}")
+        # Fallback mono look if font missing
+        self.title_font   = _sys(72)
+        self.bigfont      = _sys(42)
+        self.hiscore_font = _sys(24)
+        self.font         = _sys(20)
+        self.top_font     = _sys(96)
+
+    # ---- Joystick helpers ----
     def _stick_axes(self):
         if not self.js:
             return 0.0, 0.0
@@ -144,7 +181,7 @@ class SnakeGame:
     # ---- Assets ----
     def _load_assets(self):
         try:
-            img_path = os.path.join("assets", "pumpkin.png")
+            img_path = os.path.join(ASSETS_DIR, "pumpkin.png")
             img = pygame.image.load(img_path).convert_alpha()
             self.food_img = pygame.transform.smoothscale(img, (TILE - 2, TILE - 2))
         except Exception as e:
@@ -161,9 +198,27 @@ class SnakeGame:
             except Exception as e:
                 print(f"[warn] sprite '{path}' not loaded: {e}")
                 return None
-        base = "assets"
+        base = ASSETS_DIR
         self.snake_imgs["head"] = load(os.path.join(base, "snake_head.png"), HEAD_SCALE)
         self.snake_imgs["tail"] = load(os.path.join(base, "snake_tail.png"), TAIL_SCALE)
+
+    # ---- Video ----
+    def _play_video(self, path):
+        """Try to play a video fullscreen with an available player; blocks until done."""
+        if not os.path.exists(path):
+            return
+        for player in ("mpv", "ffplay", "omxplayer"):
+            if _shutil.which(player):
+                try:
+                    if player == "mpv":
+                        subprocess.run([player, "--fs", "--no-osd-bar", "--quiet", path])
+                    elif player == "ffplay":
+                        subprocess.run([player, "-autoexit", "-hide_banner", "-loglevel", "quiet", path])
+                    else:  # omxplayer
+                        subprocess.run([player, "--no-osd", path])
+                except Exception as e:
+                    print(f"[warn] video player failed: {e}")
+                break
 
     # ---- State ----
     def reset(self):
@@ -176,11 +231,13 @@ class SnakeGame:
         blocked = set(self.snake)
         self.food = random_empty_cell(blocked)
         self.accum = 0
-        self.state = "menu"   # menu -> playing -> paused -> gameover -> enter_score
+        # States: menu -> playing -> paused -> gameover (panel) -> menu
+        # or menu -> playing -> enter_score -> post_submit (no panel) -> menu
+        self.state = "menu"
 
         # Name entry model
         self.entry_name = ["A", "A", "A", "A"]
-        self.entry_idx = 0    # 0..3 (3 = ENTER)
+        self.entry_idx = 0    # 0..3 (4 = ENTER)
         self.start_need_neutral = True
 
     # ---- Input helpers ----
@@ -237,7 +294,7 @@ class SnakeGame:
         # Joystick axes
         if self.js:
             ax_h = self.js.get_axis(AXIS_H)
-            ax_v = -self.js.get_axis(AXIS_V)  # you chose to invert V here
+            ax_v = -self.js.get_axis(AXIS_V)  # your chosen invert on V
             if abs(ax_h) > abs(ax_v):
                 if ax_h <= -AXIS_THRESH: want = (-1, 0)
                 elif ax_h >=  AXIS_THRESH: want = ( 1, 0)
@@ -272,14 +329,25 @@ class SnakeGame:
                 self.snake.pop()
 
     def _to_gameover(self):
+        # Play death video (blocking)
+        if os.path.exists(VIDEO_DIED):
+            self._play_video(VIDEO_DIED)
+
         # If score qualifies for table -> enter name
         if self._qualifies(self.score):
-            self.state = "enter_score"
-            self.entry_name = ["A", "A", "A", "A"]
-            self.entry_idx = 0
-            self.last_ui_nav = 0
+            if self._is_top_score(self.score):
+                # Show neon celebration first, THEN enter name
+                self.state = "topcelebrate"
+                self.topcelebrate_until = pygame.time.get_ticks() + TOPCELEB_MS
+            else:
+                self.state = "enter_score"
+                self.entry_name = ["A", "A", "A", "A"]
+                self.entry_idx = 0
+                self.last_ui_nav = 0
         else:
+            # Straight to gameover panel with lockout timer
             self.state = "gameover"
+            self.gameover_until = pygame.time.get_ticks() + GAMEOVER_LOCK_MS
             self.start_need_neutral = True
 
     # ---- Highscore logic ----
@@ -290,13 +358,23 @@ class SnakeGame:
             return True
         return score > self.scores[-1]["score"]
 
+    def _is_top_score(self, score: int) -> bool:
+        """True if this score is #1 (tie or beat)."""
+        if not self.scores:
+            return score > 0
+        return score >= self.scores[0]["score"]
+
     def _commit_score(self):
         name = "".join(self.entry_name).strip() or "AAAA"
         self.scores.append({"name": name, "score": self.score})
         self.scores.sort(key=lambda x: x["score"], reverse=True)
         self.scores = self.scores[:MAX_SCORES]
         save_scores(SAVE_PATH, self.scores)
-        self.state = "gameover"
+
+        # After submitting a leaderboard entry:
+        # DO NOT show the high-scores panel. Show a simple "saved" panel for 5s, then go to menu.
+        self.state = "post_submit"
+        self.post_until = pygame.time.get_ticks() + GAMEOVER_LOCK_MS
         self.start_need_neutral = True
 
     # ---- UI name entry helpers ----
@@ -342,7 +420,9 @@ class SnakeGame:
                     if self._ui_can_nav() and self.entry_idx < 4:
                         self._ui_change_letter(-1)
                 elif e.key == pygame.K_ESCAPE:
+                    # cancel name entry, still go to gameover lock screen
                     self.state = "gameover"
+                    self.gameover_until = pygame.time.get_ticks() + GAMEOVER_LOCK_MS
 
         # Joystick axes (edge-ish via cooldown)
         if self.js and self._ui_can_nav():
@@ -442,38 +522,19 @@ class SnakeGame:
         hud = self.font.render(f"Score: {self.score}", True, TEXT_COLOR)
         self.screen.blit(hud, (8, 6))
 
-    def draw_menu(self, title, subtitle="Move the joystick to start"):
+    def draw_menu(self):
         self.draw_playfield()
-        t = self.bigfont.render(title, True, TEXT_COLOR)
-        s = self.font.render(subtitle, True, TEXT_COLOR)
-        self.screen.blit(t, t.get_rect(center=(SCREEN_W//2, SCREEN_H//2 - 30)))
-        self.screen.blit(s, s.get_rect(center=(SCREEN_W//2, SCREEN_H//2 + 20)))
-        # Also show top scores
-        self._draw_scoreboard(x=SCREEN_W//2, y=SCREEN_H//2 + 90, center=True)
-
-    def _draw_scoreboard(self, x: int, y: int, center=False):
-        title = self.font.render("High Scores", True, TEXT_COLOR)
-        rect = title.get_rect(midtop=(x, y)) if center else (x, y)
-        if center:
-            self.screen.blit(title, rect)
-            yy = rect.bottom + 6
-        else:
-            self.screen.blit(title, (x, y))
-            yy = y + title.get_height() + 6
-        for i, row in enumerate(self.scores[:MAX_SCORES], start=1):
-            line = self.font.render(f"{i:2d}. {row['name']:<4} — {row['score']}", True, TEXT_COLOR)
-            if center:
-                self.screen.blit(line, line.get_rect(midtop=(x, yy)))
-            else:
-                self.screen.blit(line, (x, yy))
-            yy += line.get_height() + 2
-
+        # Big retro title, no scoreboard here per your request
+        title = self.title_font.render("PYTHON vs PUMPKINS", True, TEXT_COLOR)
+        self.screen.blit(title, title.get_rect(center=(SCREEN_W//2, SCREEN_H//2 - 40)))
+        s = self.hiscore_font.render("Move the joystick or press ENTER to start", True, TEXT_COLOR)
+        self.screen.blit(s, s.get_rect(center=(SCREEN_W//2, SCREEN_H//2 + 40)))
 
     def _draw_gameover_scores_panel(self):
-        # Panel geometry: centered, leaves space below for the restart hint
+        # Panel geometry: centered
         panel_w, panel_h = 560, 320
         panel = pygame.Rect(0, 0, panel_w, panel_h)
-        panel.center = (SCREEN_W // 2, SCREEN_H // 2 - 30)
+        panel.center = (SCREEN_W // 2, SCREEN_H // 2 - 10)
 
         # Panel background
         pygame.draw.rect(self.screen, (16, 16, 16), panel, border_radius=12)
@@ -486,28 +547,22 @@ class SnakeGame:
         # Split into 2 columns
         left_x  = panel.left + panel_w // 4
         right_x = panel.left + 3 * panel_w // 4
-        start_y = panel.top + 70
-        line_gap = 8
+        start_y = panel.top + 80
+        line_gap = 6
 
         # Left column (1–5)
         yy = start_y
         for i, row in enumerate(self.scores[:5], start=1):
-            line = self.hiscore_font.render(
-                f"{i:2d}. {row['name']:<4} — {row['score']}", True, TEXT_COLOR
-            )
+            line = self.hiscore_font.render(f"{i:2d}. {row['name']:<4} — {row['score']}", True, TEXT_COLOR)
             self.screen.blit(line, line.get_rect(midtop=(left_x, yy)))
             yy += line.get_height() + line_gap
 
         # Right column (6–10)
         yy = start_y
         for i, row in enumerate(self.scores[5:10], start=6):
-            line = self.hiscore_font.render(
-                f"{i:2d}. {row['name']:<4} — {row['score']}", True, TEXT_COLOR
-            )
+            line = self.hiscore_font.render(f"{i:2d}. {row['name']:<4} — {row['score']}", True, TEXT_COLOR)
             self.screen.blit(line, line.get_rect(midtop=(right_x, yy)))
             yy += line.get_height() + line_gap
-
-
 
     def _draw_name_entry(self):
         self.draw_playfield()
@@ -520,11 +575,11 @@ class SnakeGame:
         pygame.draw.rect(self.screen, (64,64,64), panel, width=2, border_radius=12)
 
         # Title
-        t = self.bigfont.render("NEW HIGH SCORE!!!", True, TEXT_COLOR)
+        t = self.bigfont.render("You Made The Leaderboard!", True, TEXT_COLOR)
         self.screen.blit(t, t.get_rect(midtop=(panel.centerx, panel.top + 12)))
 
-        subt = self.font.render(f"Score: {self.score}", True, TEXT_COLOR)
-        self.screen.blit(subt, subt.get_rect(midtop=(panel.centerx, panel.top + 72)))
+        subt = self.hiscore_font.render(f"Score: {self.score}", True, TEXT_COLOR)
+        self.screen.blit(subt, subt.get_rect(midtop=(panel.centerx, panel.top + 60)))
 
         # Entry slots (4 letters + ENTER)
         slots_y = panel.top + 350
@@ -549,13 +604,94 @@ class SnakeGame:
             txt = self.bigfont.render(label, True, TEXT_COLOR)
             self.screen.blit(txt, txt.get_rect(center=r.center))
 
-        hint1 = self.font.render("LEFT/RIGHT: Select   UP/DOWN: Change", True, TEXT_COLOR)
-        hint2 = self.font.render("Hover ENTER and press DOWN to submit", True, TEXT_COLOR)
-        self.screen.blit(hint1, hint1.get_rect(midtop=(panel.centerx, panel.bottom - 70)))
-        self.screen.blit(hint2, hint2.get_rect(midtop=(panel.centerx, panel.bottom - 42)))
+        hint1 = self.hiscore_font.render("LEFT/RIGHT: Select   UP/DOWN: Change", True, TEXT_COLOR)
+        hint2 = self.hiscore_font.render("Hover ENTER and press DOWN to submit", True, TEXT_COLOR)
+        self.screen.blit(hint1, hint1.get_rect(midtop=(panel.centerx, panel.bottom - 90)))
+        self.screen.blit(hint2, hint2.get_rect(midtop=(panel.centerx, panel.bottom - 60)))
 
-        # Draw current table on right side of panel
-        self._draw_scoreboard(x=panel.right - 160, y=panel.top + 40, center=False)
+    def _draw_rainbow_text(self, text: str, center: tuple[int, int], t_ms: int,
+                           font=None, outline_px=2, glow_rings=(6, 3), glow_alpha=80):
+        """
+        Rainbow *inside* the glyphs (not boxes), with a dark outline and soft glow.
+        - font: defaults to self.title_font, falls back to self.bigfont.
+        - outline_px: thickness of the black stroke.
+        - glow_rings: list of pixel offsets for additive glow.
+        """
+        if font is None:
+            font = getattr(self, "title_font", None) or self.bigfont
+
+        # measure + center
+        text_w, text_h = font.size(text)
+        x0 = center[0] - text_w // 2
+        y0 = center[1] - text_h // 2
+
+        # 1) build a rainbow gradient surface the size of the text
+        grad = pygame.Surface((text_w, text_h), pygame.SRCALPHA)
+        # animate hue over time; sweep across X
+        period_ms = 4000.0
+        phase = (t_ms % period_ms) / period_ms
+        for x in range(text_w):
+            hue = (phase + x / max(1, text_w)) % 1.0
+            r, g, b = colorsys.hsv_to_rgb(hue, 1.0, 1.0)
+            pygame.draw.line(grad, (int(r*255), int(g*255), int(b*255), 255), (x, 0), (x, text_h))
+
+        # 2) render the text once (white = full mask, nice antialias alpha)
+        mask_text = font.render(text, True, (255, 255, 255))    # has per-pixel alpha
+        black_text = font.render(text, True, (0, 0, 0))
+
+        # 3) make the gradient respect the text alpha (RGBA_MULT multiplies both color and alpha)
+        grad.blit(mask_text, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+
+        # 4) soft colored glow *under* the text
+        if glow_rings:
+            glow = grad.copy()
+            glow.set_alpha(glow_alpha)
+            # 8 directions around the glyph for a halo
+            def ring_offsets(r):
+                return [(-r, 0), (r, 0), (0, -r), (0, r), (-r, -r), (-r, r), (r, -r), (r, r)]
+            for r in glow_rings:
+                for dx, dy in ring_offsets(r):
+                    self.screen.blit(glow, (x0 + dx, y0 + dy), special_flags=pygame.BLEND_ADD)
+
+        # 5) crisp black outline for readability
+        if outline_px > 0:
+            for dx in range(-outline_px, outline_px + 1):
+                for dy in range(-outline_px, outline_px + 1):
+                    if dx == 0 and dy == 0:
+                        continue
+                    self.screen.blit(black_text, (x0 + dx, y0 + dy))
+
+        # 6) final gradient-filled text on top
+        self.screen.blit(grad, (x0, y0))
+
+
+    def _draw_topcelebrate_screen(self):
+        # dim the background playfield a bit
+        overlay = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 140))
+        self.screen.blit(overlay, (0, 0))
+
+        now = pygame.time.get_ticks()
+        # Main neon headline
+        # in your “new #1 score” celebration state draw:
+        self._draw_rainbow_text(
+            "NEW TOP HIGH SCORE!",
+            (SCREEN_W//2, SCREEN_H//2 - 120),
+            pygame.time.get_ticks(),
+            font=self.title_font,      # or a bigger dedicated font if you made one
+            outline_px=3,
+            glow_rings=(10, 6, 3),
+            glow_alpha=70
+        )
+
+
+        # Score under it (steady, not neon)
+        score_txt = self.bigfont.render(f"SCORE: {self.score}", True, TEXT_COLOR)
+        self.screen.blit(score_txt, score_txt.get_rect(center=(SCREEN_W//2, SCREEN_H//2 + 40)))
+
+        # (No input hint here—this screen auto-advances)
+
+
 
     # ---------- Main loop ----------
     def run(self):
@@ -569,17 +705,14 @@ class SnakeGame:
                 elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                     running = False
 
-            # State machine
             if self.state == "menu":
-                # Start on any joystick movement or Enter (keyboard)
+                # Start on any joystick movement (after neutral) or Enter (key edge)
                 started = False
 
-                # only trigger on key *edge*
                 for e in events:
                     if e.type == pygame.KEYDOWN and e.key == pygame.K_RETURN:
                         started = True
 
-                # joystick: require neutral first, then movement
                 if self.js:
                     if self.start_need_neutral:
                         if self._stick_neutral():
@@ -592,11 +725,9 @@ class SnakeGame:
                     self.reset()
                     self.state = "playing"
 
-                # draw
-                self.draw_menu("Python vs. Pumpkins")
+                self.draw_menu()
 
             elif self.state == "playing":
-                # Input + step
                 self.handle_input_game()
                 self.accum += dt
                 while self.accum >= STEP_MS:
@@ -604,43 +735,50 @@ class SnakeGame:
                     self.accum -= STEP_MS
                 self.draw_playfield()
 
-                # Pause (optional) via SPACE
                 for e in events:
                     if e.type == pygame.KEYDOWN and e.key == pygame.K_SPACE:
                         self.state = "paused"
 
             elif self.state == "paused":
                 self.draw_playfield()
-                self.draw_menu("Paused", "Press SPACE to resume")
+                t = self.bigfont.render("Paused", True, TEXT_COLOR)
+                s = self.hiscore_font.render("Press SPACE to resume", True, TEXT_COLOR)
+                self.screen.blit(t, t.get_rect(center=(SCREEN_W//2, SCREEN_H//2 - 20)))
+                self.screen.blit(s, s.get_rect(center=(SCREEN_W//2, SCREEN_H//2 + 30)))
                 for e in events:
                     if e.type == pygame.KEYDOWN and e.key == pygame.K_SPACE:
                         self.state = "playing"
+
+            elif self.state == "topcelebrate":
+                # Draw the field behind it for a nice backdrop
+                self.draw_playfield()
+                self._draw_topcelebrate_screen()
+                # Ignore input; auto-advance after timer
+                if pygame.time.get_ticks() >= self.topcelebrate_until:
+                    # Now transition to name entry
+                    self.state = "enter_score"
+                    self.entry_name = ["A", "A", "A", "A"]
+                    self.entry_idx = 0
+                    self.last_ui_nav = 0
 
             elif self.state == "enter_score":
                 self._draw_name_entry()
                 self.handle_input_entry(events)
 
+            elif self.state == "post_submit":
+                # Show a simple confirmation for 5 seconds; ignore input
+                self._draw_gameover_scores_panel()
+                if pygame.time.get_ticks() >= self.post_until:
+                    self.state = "menu"
+                    self.start_need_neutral = True
+
             elif self.state == "gameover":
+                # Death without leaderboard: show highscores panel (locked)
                 self.draw_playfield()
                 self._draw_gameover_scores_panel()
-                # Restart hint (sits below the panel)
-                s = self.font.render("Press ENTER or move joystick to play again", True, TEXT_COLOR)
-                self.screen.blit(s, s.get_rect(midtop=(SCREEN_W//2, SCREEN_H//2 + 100)))
-                # start on input
-                started = False
-                for e in events:
-                    if e.type == pygame.KEYDOWN and e.key == pygame.K_RETURN:
-                        started = True
-                if self.js:
-                    if self.start_need_neutral:
-                        if self._stick_neutral():
-                            self.start_need_neutral = False
-                    else:
-                        if self._stick_moved():
-                            started = True
-                if started:
-                    self.reset()
-                    self.state = "playing"
+                if pygame.time.get_ticks() >= self.gameover_until:
+                    self.state = "menu"
+                    self.start_need_neutral = True
 
             pygame.display.flip()
 
