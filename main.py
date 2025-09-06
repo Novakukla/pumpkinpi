@@ -520,7 +520,7 @@ class SnakeGame:
         pygame.draw.rect(self.screen, (64,64,64), panel, width=2, border_radius=12)
 
         # Title
-        t = self.bigfont.render("NEW HIGHSCORE!!!", True, TEXT_COLOR)
+        t = self.bigfont.render("NEW HIGH SCORE!!!", True, TEXT_COLOR)
         self.screen.blit(t, t.get_rect(midtop=(panel.centerx, panel.top + 12)))
 
         subt = self.font.render(f"Score: {self.score}", True, TEXT_COLOR)
