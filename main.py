@@ -329,10 +329,6 @@ class SnakeGame:
                 self.snake.pop()
 
     def _to_gameover(self):
-        # Play death video (blocking)
-        if os.path.exists(VIDEO_DIED):
-            self._play_video(VIDEO_DIED)
-
         # If score qualifies for table -> enter name
         if self._qualifies(self.score):
             if self._is_top_score(self.score):
