@@ -15,7 +15,7 @@ MARGIN_TOP = (SCREEN_H - GRID_H * TILE) // 2
 MARGIN_LEFT = (SCREEN_W - GRID_W * TILE) // 2
 
 # Fullscreen on Pi; windowed on desktop by commenting this block if you prefer
-FULLSCREEN = False
+FULLSCREEN = True
 
 # Joystick axis mapping you settled on:
 # axis 1: -1 = LEFT, +1 = RIGHT
