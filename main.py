@@ -526,8 +526,8 @@ class SnakeGame:
         s = self.hiscore_font.render("Move the joystick or press ENTER to start", True, TEXT_COLOR)
         self.screen.blit(s, s.get_rect(center=(SCREEN_W//2, SCREEN_H//2 + 40)))
         # Footer credit
-		credit = self.hiscore_font.render("made by nova kukla", True, (150, 150, 150))
-		self.screen.blit(credit, credit.get_rect(midbottom=(SCREEN_W//2, SCREEN_H - 10)))
+        credit = self.hiscore_font.render("made by nova kukla", True, (150, 150, 150))
+        self.screen.blit(credit, credit.get_rect(midbottom=(SCREEN_W//2, SCREEN_H - 10)))
 
 
     def _draw_gameover_scores_panel(self):
